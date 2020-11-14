@@ -28,7 +28,7 @@ int inv_control::RunInvControl()
 	   SelectDirection();
 	   CruiseControl();
 	   
-	   CallNumber=1;
+	   CallNumber=0;
    }
    
    return ProcessThrottle();
