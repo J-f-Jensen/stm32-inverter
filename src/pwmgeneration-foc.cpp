@@ -53,7 +53,7 @@ void PwmGeneration::Run()
       int kifrqgain = Param::GetInt(Param::curkifrqgain);
       s32fp id, iq;
 
-      Encoder::UpdateRotorAngle(dir);
+      Encoder::UpdateRotorAngle();
 
       CalcNextAngleSync(dir);
 

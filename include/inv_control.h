@@ -36,8 +36,6 @@ class inv_control
 	static void GetCruiseCreepCommand(s32fp& finalSpnt, s32fp throtSpnt);
 	static s32fp ProcessThrottle();
     static void PostErrorIfRunning(ERROR_MESSAGE_NUM err);
-	
-	int CallNumber=1;
 };
 
 #endif // THROTTLE_H

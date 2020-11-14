@@ -1,3 +1,4 @@
+#include <libopencm3/stm32/rtc.h>
 #include "inv_control.h"
 #include "throttle.h"
 #include "digio.h"
@@ -5,10 +6,9 @@
 #include "param_save.h"
 #include "my_math.h"
 #include "inc_encoder.h"
-#include "stm32_can.h"
 #include "anain.h"
 
-extern can* can
+static int CallNumber=0;
 
 int inv_control::RunInvControl()
 {
@@ -19,7 +19,8 @@ int inv_control::RunInvControl()
    Param::SetInt(Param::din_brake, DigIo::brake_in.Get());
    Param::SetInt(Param::din_forward, DigIo::fwd_in.Get());
    Param::SetInt(Param::din_reverse, DigIo::rev_in.Get());
-   Param::SetInt(Param::din_bms, (Param::canio & CAN_IO_BMS) != 0 || (hwRev == HW_TESLA ? false : DigIo::bms_in.Get()) );
+   //Param::SetInt(Param::din_bms, (Param::canio & CAN_IO_BMS) != 0 || (hwRev == HW_TESLA ? false : DigIo::bms_in.Get()) );
+   Param::SetInt(Param::din_bms, DigIo::bms_in.Get() );
    
    if (CallNumber == 10)
    {
@@ -150,6 +151,7 @@ int inv_control::GetUserThrottleCommand()
    bool brake = Param::GetBool(Param::din_brake);
    int potmode = Param::GetInt(Param::potmode);
 
+/*
    if (potmode == POTMODE_CAN)
    {
       //500ms timeout
@@ -167,11 +169,12 @@ int inv_control::GetUserThrottleCommand()
    }
    else
    {
+*/
       potval = AnaIn::throttle1.Get();
       pot2val = AnaIn::throttle2.Get();
       Param::SetInt(Param::pot, potval);
       Param::SetInt(Param::pot2, pot2val);
-   }
+ //  }
 
    /* Error light on implausible value */
    if (!Throttle::CheckAndLimitRange(&potval, 0))
