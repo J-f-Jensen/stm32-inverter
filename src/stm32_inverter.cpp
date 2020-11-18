@@ -36,12 +36,28 @@
 #include "temp_meas.h"
 #include "param_save.h"
 #include "inc_encoder.h"
-#include "inv_control.h"
 #include "my_math.h"
 #include "errormessage.h"
 #include "pwmgeneration.h"
 #include "printf.h"
 #include "stm32scheduler.h"
+
+//This structure presupposes little endian mode. If you use it on a big endian processor you're going to have a bad time.
+typedef union {
+  uint64_t value;
+  struct {
+    uint32_t low;
+    uint32_t high;
+  };
+  struct {
+    uint16_t s0;
+    uint16_t s1;
+    uint16_t s2;
+    uint16_t s3;
+    };
+  uint8_t bytes[8];
+} CanDataBytesUnion;
+
 
 #define RMS_SAMPLES 256
 #define SQRT2OV1 0.707106781187
@@ -52,7 +68,9 @@ HWREV hwRev; //Hardware variant of board we are running on
 
 //Precise control of executing the boost controller
 static Stm32Scheduler* scheduler;
+
 static Can* can;
+static s32fp torquePercent = 0;
 
 static void GetDigInputs()
 {
@@ -289,6 +307,7 @@ static s32fp ProcessUdc()
 
 static void Ms1Task(void)
 {
+   /*
    static int speedCnt = 0;
 
    if (Param::GetInt(Param::pwmfunc) == PWM_FUNC_SPEEDFRQ)
@@ -304,6 +323,7 @@ static void Ms1Task(void)
          speedCnt--;
       }
    }
+   */
 }
 
 //Normal run takes 70µs -> 0.7% cpu load (last measured version 3.5)
@@ -320,7 +340,6 @@ static void Ms10Task(void)
    ErrorMessage::SetTime(rtc_get_counter_val());
    Encoder::UpdateRotorFrequency(100);
    GetDigInputs();
-   s32fp torquePercent = inv_control::RunInvControl();
    CalcAndOutputTemp();
    Param::SetInt(Param::speed, Encoder::GetSpeed());
 
@@ -371,11 +390,11 @@ static void Ms10Task(void)
       PwmGeneration::SetTorquePercent(0);
       PwmGeneration::SetOpmode(MOD_OFF);
 	  
-	  inv_control::ResetInvControl();
+	  torquePercent=0;
    }
    else if (0 == initWait)
    {
-      inv_control::ResetInvControl();
+      torquePercent=0;
       Encoder::Reset();
       //this applies new deadtime and pwmfrq and enables the outputs for the given mode
       PwmGeneration::SetOpmode(opmode);
@@ -567,6 +586,35 @@ extern "C" void tim4_isr(void)
    scheduler->Run();
 }
 
+static void ProcessCan0x287Message(uint32_t data[2])
+{
+    CanDataBytesUnion CanData;
+
+    CanData.value = (uint64_t) data;
+
+    if (CanData.bytes[6] == 0x03 )
+    {
+        torquePercent = Candate.s1-10000;
+    }
+    else 
+    {
+        torquePercent = 0;
+    }
+}
+
+static void CanCallback(uint32_t id, uint32_t data[2])
+{
+   switch (id)
+   {
+   case 0x287:
+      ProcessCan0x287Message(data);
+      break;
+
+   default:
+      break;
+   }
+}
+
 extern "C" int main(void)
 {
    clock_setup();
@@ -590,7 +638,10 @@ extern "C" int main(void)
 
    Stm32Scheduler s(hwRev == HW_BLUEPILL ? TIM4 : TIM2); //We never exit main so it's ok to put it on stack
    scheduler = &s;
+   
    Can c(CAN1, (Can::baudrates)Param::GetInt(Param::canspeed));
+   c.SetReceiveCallback(CanCallback);
+   c.RegisterUserMessage(0x287); // We only listen for messages on this address 
    can = &c;
 
    s.AddTask(Ms1Task, 1);
