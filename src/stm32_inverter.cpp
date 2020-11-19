@@ -71,6 +71,7 @@ static Stm32Scheduler* scheduler;
 
 static Can* can;
 static s32fp torquePercent = 0;
+static int CanMessageTimeCounter = 0;
 
 static void GetDigInputs()
 {
@@ -428,10 +429,21 @@ static void Ms100Task(void)
    Param::SetInt(Param::turns, Encoder::GetFullTurns());
    Param::SetInt(Param::lasterr, ErrorMessage::GetLastError());
 
+   // If we not have recived can message within the last 400~500ms then we stop the inverter
+   if (CanMessageTimeCounter == 0)
+   {
+       Param::SetInt(Param::opmode, MOD_OFF);
+       torquePercent = 0;
+   }
+   else 
+   {
+       CanMessageTimeCounter--;
+   }
+
    if (hwRev == HW_REV1 || hwRev == HW_BLUEPILL)
    {
-      //If break pin is high and both mprot and emcystop are high than it must be over current
-      if (DigIo::emcystop_in.Get() && DigIo::mprot_in.Get() && DigIo::bk_in.Get())
+      //If mprot is high than it must be over current
+      if (DigIo::mprot_in.Get())
       {
          Param::SetInt(Param::din_ocur, 0);
       }
@@ -588,18 +600,25 @@ extern "C" void tim4_isr(void)
 
 static void ProcessCan0x287Message(uint32_t data[2])
 {
+    int opmode = Param::GetInt(Param::opmode);
     CanDataBytesUnion CanData;
 
     CanData.value = (uint64_t) data;
 
-    if (CanData.bytes[6] == 0x03 )
+    CanMessageTimeCounter = 4;
+
+    if ( CanData.bytes[6] == 0x03 )
     {
-        torquePercent = Candate.s1-10000;
+        torquePercent = (CanData.s1 - 10000) / 10;
+        opmode = MOD_RUN;
     }
     else 
     {
         torquePercent = 0;
+        opmode = MOD_OFF;
     }
+
+    Param::SetInt(Param::opmode, opmode);
 }
 
 static void CanCallback(uint32_t id, uint32_t data[2])
