@@ -9,14 +9,14 @@ The only external depedency is libopencm3 which I forked. You can download and b
 
 `make get-deps`
 
-Now you can compile stm32-sine by typing
+Now you can compile stm32-inverter in FOC verison by typing
 
 `make`
 
 or
 
-`CONTROL=FOC make`
+`CONTROL=SINE make`
 
-to build the FOC version for synchronous motors.
+to build the SINE version for synchronous motors.
 
 And upload it to your board using a JTAG/SWD adapter, the updater.py script or the esp8266 web interface
