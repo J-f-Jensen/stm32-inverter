@@ -42,23 +42,6 @@
 #include "printf.h"
 #include "stm32scheduler.h"
 
-//This structure presupposes little endian mode. If you use it on a big endian processor you're going to have a bad time.
-typedef union {
-  uint64_t value;
-  struct {
-    uint32_t low;
-    uint32_t high;
-  };
-  struct {
-    uint16_t s0;
-    uint16_t s1;
-    uint16_t s2;
-    uint16_t s3;
-    };
-  uint8_t bytes[8];
-} CanDataBytesUnion;
-
-
 #define RMS_SAMPLES 256
 #define SQRT2OV1 0.707106781187
 #define PRECHARGE_TIMEOUT 500 //5s
@@ -601,15 +584,15 @@ extern "C" void tim4_isr(void)
 static void ProcessCan0x287Message(uint32_t data[2])
 {
     int opmode = Param::GetInt(Param::opmode);
-    CanDataBytesUnion CanData;
 
-    CanData.value = (uint64_t) data;
+    uint16_t rawCanTorquePercent = data[0] >> 16 & 0xFFFF;
+    uint8_t rawCanStatus = data[1] >> 8 & 0xFF;
 
     CanMessageTimeCounter = 4;
 
-    if ( CanData.bytes[6] == 0x03 )
+    if ( rawCanStatus == 0x03 )
     {
-        torquePercent = (CanData.s1 - 10000) / 10;
+        torquePercent = rawCanTorquePercent / 10;
         opmode = MOD_RUN;
     }
     else 
