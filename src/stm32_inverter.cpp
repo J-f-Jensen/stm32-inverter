@@ -72,7 +72,6 @@ static void GetDigInputs()
    
    Param::SetInt(Param::din_start, DigIo::start_in.Get()); // Used as inverter enable PIN
    Param::SetInt(Param::din_mprot, DigIo::mprot_in.Get());
-   Param::SetInt(Param::din_emcystop, DigIo::emcystop_in.Get()); // Optional
 
 
    if (hwRev != HW_REV1 && hwRev != HW_BLUEPILL)
@@ -178,9 +177,6 @@ static void CalcAndOutputTemp()
 {
    static int temphsFlt = 0;
    static int tempmFlt = 0;
-   int pwmgain = Param::GetInt(Param::pwmgain);
-   int pwmofs = Param::GetInt(Param::pwmofs);
-   int pwmfunc = Param::GetInt(Param::pwmfunc);
    int tmpout = 0;
    s32fp tmphs = 0, tmpm = 0;
 
@@ -188,27 +184,6 @@ static void CalcAndOutputTemp()
 
    temphsFlt = IIRFILTER(tmphs, temphsFlt, 15);
    tempmFlt = IIRFILTER(tmpm, tempmFlt, 18);
-
-   switch (pwmfunc)
-   {
-      default:
-      case PWM_FUNC_TMPM:
-         tmpout = FP_TOINT(tmpm) * pwmgain + pwmofs;
-         break;
-      case PWM_FUNC_TMPHS:
-         tmpout = FP_TOINT(tmphs) * pwmgain + pwmofs;
-         break;
-      case PWM_FUNC_SPEED:
-         tmpout = Param::Get(Param::speed) * pwmgain + pwmofs;
-         break;
-      case PWM_FUNC_SPEEDFRQ:
-         //Handled in 1ms task
-         break;
-   }
-
-   tmpout = MIN(0xFFFF, MAX(0, tmpout));
-
-   timer_set_oc_value(OVER_CUR_TIMER, TIM_OC4, tmpout);
 
    Param::SetFlt(Param::tmphs, tmphs);
    Param::SetFlt(Param::tmpm, tmpm);
@@ -332,7 +307,6 @@ static void Ms10Task(void)
       PwmGeneration::SetTorquePercent(torquePercent);
    }
 
-   stt |= DigIo::emcystop_in.Get() ? STAT_NONE : STAT_EMCYSTOP;
    stt |= DigIo::mprot_in.Get() ? STAT_NONE : STAT_MPROT;
    stt |= udc >= Param::Get(Param::udcsw) ? STAT_NONE : STAT_UDCBELOWUDCSW;
    stt |= udc < Param::Get(Param::udclim) ? STAT_NONE : STAT_UDCLIM;
@@ -425,7 +399,7 @@ static void Ms100Task(void)
 
    if (hwRev == HW_REV1 || hwRev == HW_BLUEPILL)
    {
-      //If mprot is high than it must be over current
+      //If mprot is high then it must be over current
       if (DigIo::mprot_in.Get())
       {
          Param::SetInt(Param::din_ocur, 0);
@@ -445,6 +419,18 @@ static void Ms100Task(void)
 
    Param::SetFlt(Param::uac, uac);
    #endif // CONTROL
+
+    uint32_t canData[2];
+
+    // CAN ID: 289, Torque: A and B I use IDC instead, motor speed: C and D, High voltage E and F
+    canData[0] = (Param::Get(Param::idc) + 10000) | (Param::Get(Param::speed) + 20000) << 16;
+    canData[1] = (Param::Get(Param::udc) * 10) | 0x0000 << 16;
+    can->Send(0x289, canData);
+
+    // CAN ID: 299, motor temp: A, inv. temp: B, Rest = 0
+    canData[0] = (Param::Get(Param::tmpm) + 40) | (Param::Get(Param::tmphs) + 40) << 8 | 0x0000 << 16;
+    canData[1] = 0;
+    can->Send(0x299, canData);
 
    if (Param::GetInt(Param::canperiod) == CAN_PERIOD_100MS)
       can->SendAll();
@@ -588,7 +574,7 @@ static void ProcessCan0x287Message(uint32_t data[2])
     uint16_t rawCanTorquePercent = data[0] >> 16 & 0xFFFF;
     uint8_t rawCanStatus = data[1] >> 16 & 0xFF;
 
-    CanMessageTimeCounter = 4;
+    CanMessageTimeCounter = 5;
 
     if ( rawCanStatus == 0x03 )
     {
