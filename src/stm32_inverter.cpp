@@ -586,7 +586,7 @@ static void ProcessCan0x287Message(uint32_t data[2])
     int opmode = Param::GetInt(Param::opmode);
 
     uint16_t rawCanTorquePercent = data[0] >> 16 & 0xFFFF;
-    uint8_t rawCanStatus = data[1] >> 8 & 0xFF;
+    uint8_t rawCanStatus = data[1] >> 16 & 0xFF;
 
     CanMessageTimeCounter = 4;
 
