@@ -425,7 +425,7 @@ static void Ms100Task(void)
     uint16_t udcTmp = (Param::Get(Param::udc) * 10);
 
     // CAN ID: 289, Torque: A and B, I use IDC instead. Motor speed: C and D, High voltage E and F
-    uint8_t canData[8] = { (uint8_t) (idcTmp >> 8), (uint8_t) (idcTmp & 0xFF), (uint8_t) (speedTmp >> 8), (uint8_t) (speedTmp & 0xFF), (uint8_t) (udcTmp >> 8), (uint8_t) (udcTmp & 0xFF), 0, 0 };
+    uint8_t canData[8] = { (uint8_t)(idcTmp >> 8), (uint8_t)(idcTmp & 0xFF), (uint8_t)(speedTmp >> 8), (uint8_t)(speedTmp & 0xFF), (uint8_t)(udcTmp >> 8), (uint8_t)(udcTmp & 0xFF), 0, 0 };
 
     can->Send(0x289, (uint32_t*) canData);
 
