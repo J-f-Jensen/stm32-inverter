@@ -177,7 +177,6 @@ static void CalcAndOutputTemp()
 {
    static int temphsFlt = 0;
    static int tempmFlt = 0;
-   int tmpout = 0;
    s32fp tmphs = 0, tmpm = 0;
 
    GetTemps(tmphs, tmpm);
@@ -289,9 +288,7 @@ static void Ms1Task(void)
 static void Ms10Task(void)
 {
    static int initWait = 0;
-   static s32fp chargeCurRamped = 0;
    int opmode = Param::GetInt(Param::opmode);
-   int chargemode = Param::GetInt(Param::chargemode);
    int newMode = MOD_OFF;
    int stt = STAT_NONE;
    s32fp udc = ProcessUdc();
@@ -420,17 +417,29 @@ static void Ms100Task(void)
    Param::SetFlt(Param::uac, uac);
    #endif // CONTROL
 
-    uint32_t canData[2];
+    
 
-    // CAN ID: 289, Torque: A and B I use IDC instead, motor speed: C and D, High voltage E and F
-    canData[0] = (Param::Get(Param::idc) + 10000) | (Param::Get(Param::speed) + 20000) << 16;
-    canData[1] = (Param::Get(Param::udc) * 10) | 0x0000 << 16;
-    can->Send(0x289, canData);
+    // 
+    uint16_t speedTmp = (Param::Get(Param::speed) + 20000);
+    uint16_t idcTmp = (Param::Get(Param::idc) + 10000);
+    uint16_t udcTmp = (Param::Get(Param::udc) * 10);
+
+    // CAN ID: 289, Torque: A and B, I use IDC instead. Motor speed: C and D, High voltage E and F
+    uint8_t canData[8] = { (uint8_t) (idcTmp >> 8), (uint8_t) (idcTmp & 0xFF), (uint8_t) (speedTmp >> 8), (uint8_t) (speedTmp & 0xFF), (uint8_t) (udcTmp >> 8), (uint8_t) (udcTmp & 0xFF), 0, 0 };
+
+    can->Send(0x289, (uint32_t*) canData);
 
     // CAN ID: 299, motor temp: A, inv. temp: B, Rest = 0
-    canData[0] = (Param::Get(Param::tmpm) + 40) | (Param::Get(Param::tmphs) + 40) << 8 | 0x0000 << 16;
-    canData[1] = 0;
-    can->Send(0x299, canData);
+    canData[0] = (uint8_t) (Param::Get(Param::tmpm) + 40);
+    canData[1] = (uint8_t) (Param::Get(Param::tmphs) + 40);
+    canData[2] = 0;
+    canData[3] = 0;
+    canData[4] = 0;
+    canData[5] = 0;
+    canData[6] = 0;
+    canData[7] = 0;
+
+    can->Send(0x299, (uint32_t*)canData);
 
    if (Param::GetInt(Param::canperiod) == CAN_PERIOD_100MS)
       can->SendAll();
@@ -571,14 +580,14 @@ static void ProcessCan0x287Message(uint32_t data[2])
 {
     int opmode = Param::GetInt(Param::opmode);
 
-    uint16_t rawCanTorquePercent = data[0] >> 16 & 0xFFFF;
-    uint8_t rawCanStatus = data[1] >> 16 & 0xFF;
+    uint16_t rawCanTorquePercent = ((data[0] >> 8) & 0xFF00) | data[0] >> 24; // CAN Message bytes C*256+D
+    uint8_t rawCanStatus = (data[1] >> 16) & 0xFF; // CAN Message byte G
 
     CanMessageTimeCounter = 5;
 
     if ( rawCanStatus == 0x03 )
     {
-        torquePercent = rawCanTorquePercent / 10;
+        torquePercent = ( rawCanTorquePercent-10000 ) / 10;
         opmode = MOD_RUN;
     }
     else 
