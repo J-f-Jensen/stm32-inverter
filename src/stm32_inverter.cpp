@@ -396,8 +396,8 @@ static void Ms100Task(void)
 
    if (hwRev == HW_REV1 || hwRev == HW_BLUEPILL)
    {
-      //If mprot is high then it must be over current
-      if (DigIo::mprot_in.Get())
+      //If mprot and bk_in is high then it must be over current
+      if (DigIo::mprot_in.Get() && DigIo::bk_in.Get())
       {
          Param::SetInt(Param::din_ocur, 0);
       }
