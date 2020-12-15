@@ -36,7 +36,6 @@
 #include "temp_meas.h"
 #include "param_save.h"
 #include "inc_encoder.h"
-#include "inv_control.h"
 #include "my_math.h"
 #include "errormessage.h"
 #include "pwmgeneration.h"
@@ -52,7 +51,10 @@ HWREV hwRev; //Hardware variant of board we are running on
 
 //Precise control of executing the boost controller
 static Stm32Scheduler* scheduler;
+
 static Can* can;
+static s32fp torquePercent = 0;
+static int CanMessageTimeCounter = 0;
 
 static void GetDigInputs()
 {
@@ -70,7 +72,6 @@ static void GetDigInputs()
    
    Param::SetInt(Param::din_start, DigIo::start_in.Get()); // Used as inverter enable PIN
    Param::SetInt(Param::din_mprot, DigIo::mprot_in.Get());
-   Param::SetInt(Param::din_emcystop, DigIo::emcystop_in.Get()); // Optional
 
 
    if (hwRev != HW_REV1 && hwRev != HW_BLUEPILL)
@@ -176,37 +177,12 @@ static void CalcAndOutputTemp()
 {
    static int temphsFlt = 0;
    static int tempmFlt = 0;
-   int pwmgain = Param::GetInt(Param::pwmgain);
-   int pwmofs = Param::GetInt(Param::pwmofs);
-   int pwmfunc = Param::GetInt(Param::pwmfunc);
-   int tmpout = 0;
    s32fp tmphs = 0, tmpm = 0;
 
    GetTemps(tmphs, tmpm);
 
    temphsFlt = IIRFILTER(tmphs, temphsFlt, 15);
    tempmFlt = IIRFILTER(tmpm, tempmFlt, 18);
-
-   switch (pwmfunc)
-   {
-      default:
-      case PWM_FUNC_TMPM:
-         tmpout = FP_TOINT(tmpm) * pwmgain + pwmofs;
-         break;
-      case PWM_FUNC_TMPHS:
-         tmpout = FP_TOINT(tmphs) * pwmgain + pwmofs;
-         break;
-      case PWM_FUNC_SPEED:
-         tmpout = Param::Get(Param::speed) * pwmgain + pwmofs;
-         break;
-      case PWM_FUNC_SPEEDFRQ:
-         //Handled in 1ms task
-         break;
-   }
-
-   tmpout = MIN(0xFFFF, MAX(0, tmpout));
-
-   timer_set_oc_value(OVER_CUR_TIMER, TIM_OC4, tmpout);
 
    Param::SetFlt(Param::tmphs, tmphs);
    Param::SetFlt(Param::tmpm, tmpm);
@@ -289,6 +265,7 @@ static s32fp ProcessUdc()
 
 static void Ms1Task(void)
 {
+   /*
    static int speedCnt = 0;
 
    if (Param::GetInt(Param::pwmfunc) == PWM_FUNC_SPEEDFRQ)
@@ -304,15 +281,14 @@ static void Ms1Task(void)
          speedCnt--;
       }
    }
+   */
 }
 
 //Normal run takes 70µs -> 0.7% cpu load (last measured version 3.5)
 static void Ms10Task(void)
 {
    static int initWait = 0;
-   static s32fp chargeCurRamped = 0;
    int opmode = Param::GetInt(Param::opmode);
-   int chargemode = Param::GetInt(Param::chargemode);
    int newMode = MOD_OFF;
    int stt = STAT_NONE;
    s32fp udc = ProcessUdc();
@@ -320,7 +296,6 @@ static void Ms10Task(void)
    ErrorMessage::SetTime(rtc_get_counter_val());
    Encoder::UpdateRotorFrequency(100);
    GetDigInputs();
-   s32fp torquePercent = inv_control::RunInvControl();
    CalcAndOutputTemp();
    Param::SetInt(Param::speed, Encoder::GetSpeed());
 
@@ -329,7 +304,6 @@ static void Ms10Task(void)
       PwmGeneration::SetTorquePercent(torquePercent);
    }
 
-   stt |= DigIo::emcystop_in.Get() ? STAT_NONE : STAT_EMCYSTOP;
    stt |= DigIo::mprot_in.Get() ? STAT_NONE : STAT_MPROT;
    stt |= udc >= Param::Get(Param::udcsw) ? STAT_NONE : STAT_UDCBELOWUDCSW;
    stt |= udc < Param::Get(Param::udclim) ? STAT_NONE : STAT_UDCLIM;
@@ -371,11 +345,11 @@ static void Ms10Task(void)
       PwmGeneration::SetTorquePercent(0);
       PwmGeneration::SetOpmode(MOD_OFF);
 	  
-	  inv_control::ResetInvControl();
+	  torquePercent=0;
    }
    else if (0 == initWait)
    {
-      inv_control::ResetInvControl();
+      torquePercent=0;
       Encoder::Reset();
       //this applies new deadtime and pwmfrq and enables the outputs for the given mode
       PwmGeneration::SetOpmode(opmode);
@@ -409,10 +383,21 @@ static void Ms100Task(void)
    Param::SetInt(Param::turns, Encoder::GetFullTurns());
    Param::SetInt(Param::lasterr, ErrorMessage::GetLastError());
 
+   // If we not have recived can message within the last 400~500ms then we stop the inverter
+   if (CanMessageTimeCounter == 0)
+   {
+       Param::SetInt(Param::opmode, MOD_OFF);
+       torquePercent = 0;
+   }
+   else 
+   {
+       CanMessageTimeCounter--;
+   }
+
    if (hwRev == HW_REV1 || hwRev == HW_BLUEPILL)
    {
-      //If break pin is high and both mprot and emcystop are high than it must be over current
-      if (DigIo::emcystop_in.Get() && DigIo::mprot_in.Get() && DigIo::bk_in.Get())
+      //If mprot and bk_in is high then it must be over current
+      if (DigIo::mprot_in.Get() && DigIo::bk_in.Get())
       {
          Param::SetInt(Param::din_ocur, 0);
       }
@@ -431,6 +416,30 @@ static void Ms100Task(void)
 
    Param::SetFlt(Param::uac, uac);
    #endif // CONTROL
+
+    
+
+    // 
+    uint16_t speedTmp = (Param::Get(Param::speed) + 20000);
+    uint16_t idcTmp = (Param::Get(Param::idc) + 10000);
+    uint16_t udcTmp = (Param::Get(Param::udc) * 10);
+
+    // CAN ID: 289, Torque: A and B, I use IDC instead. Motor speed: C and D, High voltage E and F
+    uint8_t canData[8] = { (uint8_t)(idcTmp >> 8), (uint8_t)(idcTmp & 0xFF), (uint8_t)(speedTmp >> 8), (uint8_t)(speedTmp & 0xFF), (uint8_t)(udcTmp >> 8), (uint8_t)(udcTmp & 0xFF), 0, 0 };
+
+    can->Send(0x289, (uint32_t*) canData);
+
+    // CAN ID: 299, motor temp: A, inv. temp: B, Rest = 0
+    canData[0] = (uint8_t) (Param::Get(Param::tmpm) + 40);
+    canData[1] = (uint8_t) (Param::Get(Param::tmphs) + 40);
+    canData[2] = 0;
+    canData[3] = 0;
+    canData[4] = 0;
+    canData[5] = 0;
+    canData[6] = 0;
+    canData[7] = 0;
+
+    can->Send(0x299, (uint32_t*)canData);
 
    if (Param::GetInt(Param::canperiod) == CAN_PERIOD_100MS)
       can->SendAll();
@@ -567,6 +576,42 @@ extern "C" void tim4_isr(void)
    scheduler->Run();
 }
 
+static void ProcessCan0x287Message(uint32_t data[2])
+{
+    int opmode = Param::GetInt(Param::opmode);
+
+    uint16_t rawCanTorquePercent = ((data[0] >> 8) & 0xFF00) | data[0] >> 24; // CAN Message bytes C*256+D
+    uint8_t rawCanStatus = (data[1] >> 16) & 0xFF; // CAN Message byte G
+
+    CanMessageTimeCounter = 5;
+
+    if ( rawCanStatus == 0x03 )
+    {
+        torquePercent = ( rawCanTorquePercent-10000 ) / 10;
+        opmode = MOD_RUN;
+    }
+    else 
+    {
+        torquePercent = 0;
+        opmode = MOD_OFF;
+    }
+
+    Param::SetInt(Param::opmode, opmode);
+}
+
+static void CanCallback(uint32_t id, uint32_t data[2])
+{
+   switch (id)
+   {
+   case 0x287:
+      ProcessCan0x287Message(data);
+      break;
+
+   default:
+      break;
+   }
+}
+
 extern "C" int main(void)
 {
    clock_setup();
@@ -590,7 +635,10 @@ extern "C" int main(void)
 
    Stm32Scheduler s(hwRev == HW_BLUEPILL ? TIM4 : TIM2); //We never exit main so it's ok to put it on stack
    scheduler = &s;
+   
    Can c(CAN1, (Can::baudrates)Param::GetInt(Param::canspeed));
+   c.SetReceiveCallback(CanCallback);
+   c.RegisterUserMessage(0x287); // We only listen for messages on this address 
    can = &c;
 
    s.AddTask(Ms1Task, 1);
